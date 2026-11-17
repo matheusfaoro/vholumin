@@ -40,7 +40,8 @@ const HOTKEY_ID: i32 = 1;
 const FLASH_TIMER: usize = 1;
 const FLASH_MS: u32 = 1500;
 const WINDOW_CLASS: PCWSTR = w!("vholumin.janela");
-/// Nome do mutex de instância única (o instalador da Fase 4 usa o mesmo nome).
+/// Nome do mutex de instância única. (O instalador encontra a cópia rodando pela classe da
+/// janela, `vholumin.janela`, e pede para ela fechar com WM_CLOSE.)
 const INSTANCE_MUTEX: PCWSTR = w!("vholumin.instancia");
 /// Pedido de uma segunda cópia do vholumin para abrir as configurações.
 const WM_OPEN_SETTINGS: u32 = WM_APP + 3;

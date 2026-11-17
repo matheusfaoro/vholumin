@@ -15,6 +15,7 @@ use windows::Win32::System::Console::{
 use windows::core::w;
 
 use crate::audio;
+use crate::autostart;
 use crate::config::Config;
 use crate::processes::ProcessTable;
 use crate::toggle::{self, Outcome, Target, pct};
@@ -77,6 +78,38 @@ pub fn toggle(arg: Option<&str>) -> i32 {
         eprintln!("erro: {e}");
         1
     })
+}
+
+/// `--iniciar-com-windows sim|nao`: usado pelo instalador para gravar a escolha do usuário
+/// no config.toml e no registro (a mesma lógica do menu e da janela de configurações).
+pub fn set_autostart(arg: Option<&str>) -> i32 {
+    attach_console();
+    let enabled = match arg {
+        Some("sim") => true,
+        Some("nao" | "não") => false,
+        _ => {
+            eprintln!("uso: vholumin --iniciar-com-windows sim|nao");
+            return 2;
+        }
+    };
+    let mut config = Config::load().config;
+    config.start_with_windows = enabled;
+    if let Err(e) = config.save() {
+        logf!("--iniciar-com-windows: não foi possível salvar o config.toml: {e}");
+        eprintln!("erro: {e}");
+        return 1;
+    }
+    match autostart::sync(enabled) {
+        Ok(()) => {
+            logf!("iniciar com o Windows definido pelo instalador: {}", if enabled { "sim" } else { "não" });
+            0
+        }
+        Err(e) => {
+            logf!("--iniciar-com-windows: não foi possível ajustar o registro: {e}");
+            eprintln!("erro: {e}");
+            1
+        }
+    }
 }
 
 pub fn usage_error(message: &str) -> i32 {

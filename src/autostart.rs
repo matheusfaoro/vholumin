@@ -11,7 +11,14 @@ const RUN_KEY: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Run");
 const VALUE_NAME: PCWSTR = w!("vholumin");
 
 /// Deixa o registro de acordo com `enabled`. Só escreve se algo mudou.
+///
+/// Com `VHOLUMIN_DATA_DIR` definida (cópias de teste, com configuração separada), não mexe no
+/// registro: o valor "vholumin" da chave Run é um só, e o teste apagaria ou trocaria o da
+/// cópia de verdade.
 pub fn sync(enabled: bool) -> Result<(), String> {
+    if std::env::var_os("VHOLUMIN_DATA_DIR").is_some() {
+        return Ok(());
+    }
     let current = read();
     if enabled {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;

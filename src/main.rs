@@ -33,6 +33,8 @@ fn main() {
         None => app::run(),
         // Processo da janela de configurações, aberto pela cópia da bandeja.
         Some("--configuracoes") => settings::run(),
+        // Usado pelo instalador para gravar a opção "Iniciar com o Windows".
+        Some("--iniciar-com-windows") => diag::set_autostart(args.get(1).map(String::as_str)),
         Some("--listar") => diag::list(),
         Some("--alternar") => diag::toggle(args.get(1).map(String::as_str)),
         Some(other) => diag::usage_error(&format!("opção desconhecida: {other}")),

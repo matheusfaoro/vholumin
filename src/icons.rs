@@ -195,6 +195,129 @@ mod tests {
         assert_eq!(px[15] >> 24, 0);
     }
 
+    /// Arquivo .ico do app (o ícone azul) com vários tamanhos, imagens de 32 bits com alfa.
+    fn ico_file(sizes: &[u32]) -> Vec<u8> {
+        let images: Vec<Vec<u8>> = sizes
+            .iter()
+            .map(|&size| {
+                let px = render(IconState::Normal, size);
+                let and_row = size.div_ceil(32) * 4;
+                let mut img = Vec::new();
+                // BITMAPINFOHEADER; a altura é dobrada (cor + máscara), como o formato .ico exige.
+                img.extend(40u32.to_le_bytes());
+                img.extend((size as i32).to_le_bytes());
+                img.extend((2 * size as i32).to_le_bytes());
+                img.extend(1u16.to_le_bytes());
+                img.extend(32u16.to_le_bytes());
+                img.extend(0u32.to_le_bytes());
+                img.extend((size * size * 4 + and_row * size).to_le_bytes());
+                img.extend([0u8; 16]);
+                // Cor (BGRA), de baixo para cima.
+                for y in (0..size).rev() {
+                    for x in 0..size {
+                        let p = px[(y * size + x) as usize];
+                        img.extend([p as u8, (p >> 8) as u8, (p >> 16) as u8, (p >> 24) as u8]);
+                    }
+                }
+                // Máscara: bit 1 = transparente (para quem não entende o alfa).
+                for y in (0..size).rev() {
+                    let mut row = vec![0u8; and_row as usize];
+                    for x in 0..size {
+                        if px[(y * size + x) as usize] >> 24 == 0 {
+                            row[(x / 8) as usize] |= 0x80 >> (x % 8);
+                        }
+                    }
+                    img.extend(row);
+                }
+                img
+            })
+            .collect();
+
+        let mut out = Vec::new();
+        out.extend([0u16, 1, sizes.len() as u16].iter().flat_map(|v| v.to_le_bytes()));
+        let mut offset = 6 + 16 * sizes.len() as u32;
+        for (&size, img) in sizes.iter().zip(&images) {
+            let dim = if size >= 256 { 0 } else { size as u8 }; // 0 = 256
+            out.extend([dim, dim, 0, 0]);
+            out.extend(1u16.to_le_bytes());
+            out.extend(32u16.to_le_bytes());
+            out.extend((img.len() as u32).to_le_bytes());
+            out.extend(offset.to_le_bytes());
+            offset += img.len() as u32;
+        }
+        for img in images {
+            out.extend(img);
+        }
+        out
+    }
+
+    /// BMP de 24 bits (w × h) com a cor de cada pixel dada por `pixel(x, y)`.
+    fn bmp24(w: u32, h: u32, pixel: impl Fn(u32, u32) -> Rgb) -> Vec<u8> {
+        let row_bytes = (w * 3).div_ceil(4) * 4;
+        let data_len = row_bytes * h;
+        let mut bmp = Vec::with_capacity(54 + data_len as usize);
+        bmp.extend_from_slice(b"BM");
+        for v in [54 + data_len, 0, 54, 40] {
+            bmp.extend_from_slice(&v.to_le_bytes());
+        }
+        bmp.extend_from_slice(&(w as i32).to_le_bytes());
+        bmp.extend_from_slice(&(h as i32).to_le_bytes());
+        bmp.extend_from_slice(&1u16.to_le_bytes());
+        bmp.extend_from_slice(&24u16.to_le_bytes());
+        for v in [0u32, data_len, 2835, 2835, 0, 0] {
+            bmp.extend_from_slice(&v.to_le_bytes());
+        }
+        for y in (0..h).rev() {
+            let start = bmp.len();
+            for x in 0..w {
+                let (r, g, b) = pixel(x, y);
+                bmp.extend_from_slice(&[b, g, r]);
+            }
+            bmp.resize(start + row_bytes as usize, 0);
+        }
+        bmp
+    }
+
+    /// O ícone azul (`icon` px) centralizado num quadrado de `size` px, já pintado sobre um
+    /// fundo sólido (a imagem do canto do instalador, que é sempre escuro).
+    fn icon_on_background(size: u32, icon: u32, background: Rgb) -> Vec<u8> {
+        let px = render(IconState::Normal, icon);
+        let offset = (size - icon) / 2;
+        bmp24(size, size, |x, y| {
+            let (ix, iy) = (x.wrapping_sub(offset), y.wrapping_sub(offset));
+            if ix >= icon || iy >= icon {
+                return background;
+            }
+            let p = px[(iy * icon + ix) as usize];
+            let a = (p >> 24) as f32 / 255.0;
+            let mix = |bg: u8, fg: u32| (bg as f32 * (1.0 - a) + fg as f32 * a).round() as u8;
+            (mix(background.0, p >> 16 & 255), mix(background.1, p >> 8 & 255), mix(background.2, p & 255))
+        })
+    }
+
+    #[test]
+    fn ico_tem_cabecalho_e_todos_os_tamanhos() {
+        let ico = ico_file(&[16, 32, 256]);
+        assert_eq!(&ico[..6], &[0, 0, 1, 0, 3, 0]);
+        assert_eq!((ico[6], ico[6 + 16], ico[6 + 32]), (16, 32, 0)); // 0 = 256
+        let first_offset = u32::from_le_bytes(ico[18..22].try_into().unwrap());
+        assert_eq!(first_offset, 6 + 16 * 3);
+    }
+
+    /// Gera as imagens do app em `res/`: o ícone (`vholumin.ico`, usado no .exe e no
+    /// instalador) e as imagens do canto do instalador.
+    /// Rodar com: `cargo test exportar_imagens_do_app -- --ignored`
+    #[test]
+    #[ignore]
+    fn exportar_imagens_do_app() {
+        let res = concat!(env!("CARGO_MANIFEST_DIR"), "/res");
+        std::fs::write(format!("{res}/vholumin.ico"), ico_file(&[16, 20, 24, 32, 40, 48, 64, 256])).unwrap();
+        // Fundo do assistente escuro do Inno Setup (estilo "modern dark windows11").
+        let wizard_dark = (0x2B, 0x2B, 0x2B);
+        std::fs::write(format!("{res}/instalador-55.bmp"), icon_on_background(55, 48, wizard_dark)).unwrap();
+        std::fs::write(format!("{res}/instalador-110.bmp"), icon_on_background(110, 96, wizard_dark)).unwrap();
+    }
+
     /// Gera `target/icones-previa.bmp` para olhar os ícones ampliados.
     /// Rodar com: `cargo test exportar_previa -- --ignored`
     #[test]
@@ -229,29 +352,7 @@ mod tests {
             }
         }
 
-        let row_bytes = (w * 3).div_ceil(4) * 4;
-        let data_len = row_bytes * h;
-        let mut bmp = Vec::with_capacity(54 + data_len as usize);
-        bmp.extend_from_slice(b"BM");
-        for v in [54 + data_len, 0, 54, 40] {
-            bmp.extend_from_slice(&v.to_le_bytes());
-        }
-        bmp.extend_from_slice(&(w as i32).to_le_bytes());
-        bmp.extend_from_slice(&(h as i32).to_le_bytes());
-        bmp.extend_from_slice(&1u16.to_le_bytes());
-        bmp.extend_from_slice(&24u16.to_le_bytes());
-        for v in [0u32, data_len, 2835, 2835, 0, 0] {
-            bmp.extend_from_slice(&v.to_le_bytes());
-        }
-        for y in (0..h).rev() {
-            let start = bmp.len();
-            for x in 0..w {
-                let (r, g, b) = img[(y * w + x) as usize];
-                bmp.extend_from_slice(&[b, g, r]);
-            }
-            bmp.resize(start + row_bytes as usize, 0);
-        }
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/target/icones-previa.bmp");
-        std::fs::write(path, bmp).unwrap();
+        std::fs::write(path, bmp24(w, h, |x, y| img[(y * w + x) as usize])).unwrap();
     }
 }
