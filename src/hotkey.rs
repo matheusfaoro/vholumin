@@ -65,6 +65,14 @@ impl Hotkey {
         Ok(hotkey)
     }
 
+    /// Monta e valida uma bind a partir de modificadores + tecla.
+    pub fn new(modifiers: u32, vk: u32) -> Result<Self, String> {
+        if key_name(vk).is_none() {
+            return Err("essa tecla não pode ser usada no atalho".into());
+        }
+        Self::parse(&Self { modifiers, vk }.label())
+    }
+
     /// Texto da bind, sempre na ordem Ctrl+Alt+Shift+Win+Tecla.
     pub fn label(&self) -> String {
         let mut parts: Vec<String> = [(MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift"), (MOD_WIN, "Win")]
@@ -72,7 +80,7 @@ impl Hotkey {
             .filter(|(bit, _)| self.modifiers & bit != 0)
             .map(|(_, name)| (*name).to_string())
             .collect();
-        parts.push(key_name(self.vk));
+        parts.push(key_name(self.vk).unwrap_or_else(|| format!("0x{:02X}", self.vk)));
         parts.join("+")
     }
 
@@ -112,15 +120,13 @@ fn key_code(name: &str) -> Option<u32> {
     NAMED_KEYS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|&(_, vk)| vk)
 }
 
-fn key_name(vk: u32) -> String {
+/// Nome da tecla, ou `None` se ela não é aceita numa bind.
+fn key_name(vk: u32) -> Option<String> {
     match vk {
-        0x30..=0x39 | 0x41..=0x5A => char::from(vk as u8).to_string(),
-        0x60..=0x69 => format!("Num{}", vk - 0x60),
-        0x70..=0x87 => format!("F{}", vk - 0x6F),
-        _ => NAMED_KEYS
-            .iter()
-            .find(|&&(_, v)| v == vk)
-            .map_or_else(|| format!("0x{vk:02X}"), |&(n, _)| n.to_string()),
+        0x30..=0x39 | 0x41..=0x5A => Some(char::from(vk as u8).to_string()),
+        0x60..=0x69 => Some(format!("Num{}", vk - 0x60)),
+        0x70..=0x87 => Some(format!("F{}", vk - 0x6F)),
+        _ => NAMED_KEYS.iter().find(|&&(_, v)| v == vk).map(|&(n, _)| n.to_string()),
     }
 }
 
@@ -160,6 +166,15 @@ mod tests {
         assert!(Hotkey::parse("Shift+M").is_err());
         assert!(Hotkey::parse("Shift+Space").is_err());
         assert!(Hotkey::parse("Win+M").is_ok());
+    }
+
+    #[test]
+    fn combinacao_capturada_na_janela() {
+        assert_eq!(Hotkey::new(MOD_CONTROL | MOD_ALT, 0x4D).unwrap(), Hotkey::parse("Ctrl+Alt+M").unwrap());
+        assert_eq!(Hotkey::new(0, 0x7C).unwrap().label(), "F13");
+        assert_eq!(Hotkey::new(MOD_CONTROL, 0xBA).unwrap_err(), "essa tecla não pode ser usada no atalho");
+        assert!(Hotkey::new(0, 0x4D).is_err()); // "M" sozinho
+        assert!(Hotkey::new(MOD_CONTROL | MOD_ALT, 0x7B).is_err()); // F12
     }
 
     #[test]

@@ -17,12 +17,13 @@ use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetP
 use windows::Win32::UI::Input::KeyboardAndMouse::{HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::Shell::{NIN_SELECT, NINF_KEY, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
-    FindWindowW, GetCursorPos, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HMENU, KillTimer,
-    MENU_ITEM_FLAGS, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage,
-    RegisterClassW, RegisterWindowMessageW, SW_SHOWNORMAL, SetForegroundWindow, SetTimer, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU,
-    WM_DESTROY, WM_HOTKEY, WM_NULL, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
+    ASFW_ANY, AllowSetForegroundWindow, AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
+    DestroyWindow, DispatchMessageW, FindWindowW, GetCursorPos, GetForegroundWindow, GetMessageW,
+    GetWindowThreadProcessId, HMENU, KillTimer, MENU_ITEM_FLAGS, MF_CHECKED, MF_GRAYED,
+    MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    SW_SHOWNORMAL, SetForegroundWindow, SetMenuDefaultItem, SetTimer, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU, WM_DESTROY, WM_HOTKEY, WM_NULL,
+    WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
@@ -30,6 +31,7 @@ use crate::autostart;
 use crate::config::{Config, Loaded, Mode};
 use crate::events::{self, EVENT_GONE, EVENT_VOLUME, WM_AUDIO_EVENT, Watch};
 use crate::icons::IconState;
+use crate::settings;
 use crate::target::{TOLERANCE, Toggle};
 use crate::toggle::{self, Outcome, Target, pct};
 use crate::tray::{Tray, WM_TRAY};
@@ -42,14 +44,16 @@ const WINDOW_CLASS: PCWSTR = w!("vholumin.janela");
 const INSTANCE_MUTEX: PCWSTR = w!("vholumin.instancia");
 /// Pedido de uma segunda cópia do vholumin para abrir as configurações.
 const WM_OPEN_SETTINGS: u32 = WM_APP + 3;
+/// O processo da janela de configurações terminou (salvou ou cancelou).
+const WM_SETTINGS_CLOSED: u32 = WM_APP + 4;
 
+const CMD_SETTINGS: i32 = 9;
 const CMD_MODE_FOCUS: i32 = 10;
 const CMD_MODE_LIST: i32 = 11;
 const CMD_PAUSE: i32 = 12;
 const CMD_AUTOSTART: i32 = 13;
-const CMD_EDIT_CONFIG: i32 = 14;
 const CMD_RELOAD: i32 = 15;
-const CMD_OPEN_LOGS: i32 = 16;
+const CMD_OPEN_FOLDER: i32 = 16;
 const CMD_EXIT: i32 = 17;
 
 /// Mensagem que o Explorer manda a todos quando a barra de tarefas é recriada.
@@ -63,6 +67,8 @@ thread_local! {
 enum HotkeyState {
     Registered,
     Paused,
+    /// Solta enquanto a janela de configurações está aberta.
+    Suspended,
     /// Já usada por outro programa.
     Taken,
     Failed,
@@ -74,6 +80,8 @@ struct App {
     config: Config,
     problems: Vec<String>,
     hotkey: HotkeyState,
+    /// O processo da janela de configurações está rodando.
+    settings_open: bool,
     /// Ícone e texto "de verdade" (para onde volta depois de uma piscada).
     steady: (IconState, String),
     /// Sessões alternadas por último, acompanhadas pelos avisos de áudio.
@@ -83,8 +91,10 @@ struct App {
 
 pub fn run() -> i32 {
     if !acquire_instance() {
-        // Já tem um vholumin rodando: pede para ele abrir as configurações e sai.
+        // Já tem um vholumin rodando: pede para ele abrir as configurações e sai. Esta cópia
+        // acabou de ser aberta pelo usuário, então pode deixar a outra vir para a frente.
         unsafe {
+            let _ = AllowSetForegroundWindow(ASFW_ANY);
             if let Ok(hwnd) = FindWindowW(WINDOW_CLASS, PCWSTR::null()) {
                 let _ = PostMessageW(Some(hwnd), WM_OPEN_SETTINGS, WPARAM(0), LPARAM(0));
             }
@@ -114,9 +124,11 @@ fn acquire_instance() -> bool {
 fn run_inner() -> windows::core::Result<()> {
     // SAFETY: configuração do processo e do COM na thread principal, antes de qualquer janela.
     unsafe {
+        // O manifesto já pede escala por monitor; isto é só garantia (falha sem problema).
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
     }
+    crate::theme::enable_dark_menus();
     logf!("vholumin {} iniciado", crate::VERSION);
 
     let hwnd = create_window()?;
@@ -128,6 +140,7 @@ fn run_inner() -> windows::core::Result<()> {
         config: Config::default(),
         problems: Vec::new(),
         hotkey: HotkeyState::Failed,
+        settings_open: false,
         steady: (IconState::Normal, String::new()),
         watch: None,
         generation: 0,
@@ -185,14 +198,15 @@ fn create_window() -> windows::core::Result<HWND> {
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_HOTKEY if wparam.0 == HOTKEY_ID as usize => with_app(App::on_hotkey),
-        WM_TRAY => {
-            let event = (lparam.0 & 0xFFFF) as u32;
-            if event == WM_CONTEXTMENU || event == NIN_SELECT || event == (NIN_SELECT | NINF_KEY) {
-                show_menu(hwnd);
-            }
-        }
+        WM_TRAY => match (lparam.0 & 0xFFFF) as u32 {
+            // Clique esquerdo (ou Enter no ícone): configurações. Clique direito: menu.
+            event if event == NIN_SELECT || event == (NIN_SELECT | NINF_KEY) => open_settings(),
+            WM_CONTEXTMENU => show_menu(hwnd),
+            _ => {}
+        },
         WM_AUDIO_EVENT => with_app(|app| app.on_audio_event(wparam, lparam)),
-        WM_OPEN_SETTINGS => open_config_file(),
+        WM_OPEN_SETTINGS => open_settings(),
+        WM_SETTINGS_CLOSED => with_app(App::on_settings_closed),
         WM_TIMER if wparam.0 == FLASH_TIMER => {
             unsafe {
                 let _ = KillTimer(Some(hwnd), FLASH_TIMER);
@@ -200,7 +214,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             with_app(App::refresh_icon);
         }
         WM_DESTROY => {
-            // Solta a bind, para de acompanhar o áudio e tira o ícone antes de sair.
+            // Fecha a janela de configurações (sem salvar), solta a bind, para de acompanhar o
+            // áudio e tira o ícone antes de sair.
+            settings::close_existing();
             let app = APP.with(|cell| cell.try_borrow_mut().ok().and_then(|mut a| a.take()));
             drop(app);
             unsafe { PostQuitMessage(0) };
@@ -256,6 +272,11 @@ impl App {
     }
 
     fn register_hotkey(&mut self) {
+        if self.settings_open {
+            // Fica solta até a janela de configurações fechar (aí a configuração é relida).
+            self.hotkey = HotkeyState::Suspended;
+            return;
+        }
         let hotkey = self.config.hotkey;
         let label = hotkey.label();
         let result = unsafe {
@@ -286,11 +307,42 @@ impl App {
         }
     }
 
+    /// Abre o processo da janela de configurações e solta a bind enquanto ele roda.
+    fn start_settings(&mut self) {
+        if self.settings_open {
+            return; // já está abrindo
+        }
+        match spawn_settings(self.hwnd) {
+            Ok(()) => {
+                self.settings_open = true;
+                self.unregister_hotkey();
+                if self.hotkey != HotkeyState::Paused {
+                    self.hotkey = HotkeyState::Suspended;
+                    logf!("bind suspensa enquanto as configurações estão abertas");
+                }
+                let (state, tip) = self.idle_status();
+                self.set_steady(state, tip);
+            }
+            Err(e) => logf!("não foi possível abrir a janela de configurações: {e}"),
+        }
+    }
+
+    /// A janela de configurações fechou: relê o config.toml (salvo ou não) e volta a bind.
+    fn on_settings_closed(&mut self) {
+        self.settings_open = false;
+        logf!("janela de configurações fechada; relendo o config.toml");
+        self.apply_config(Config::load());
+        self.refresh_icon();
+    }
+
     /// Ícone e texto quando nada foi alternado ainda.
     fn idle_status(&self) -> (IconState, String) {
         let label = self.config.hotkey.label();
         match self.hotkey {
             HotkeyState::Paused => (IconState::Unavailable, "vholumin — atalho pausado".into()),
+            HotkeyState::Suspended => {
+                (IconState::Unavailable, "vholumin — atalho suspenso enquanto as configurações estão abertas".into())
+            }
             HotkeyState::Taken => {
                 (IconState::Unavailable, format!("vholumin — {label} já está em uso por outro programa"))
             }
@@ -438,6 +490,34 @@ impl Drop for App {
     }
 }
 
+/// Abre a janela de configurações (ou traz para a frente, se já estiver aberta).
+fn open_settings() {
+    if settings::bring_existing_to_front() {
+        return;
+    }
+    with_app(App::start_settings);
+}
+
+/// Abre `vholumin.exe --configuracoes` e avisa a janela principal quando ele terminar.
+/// A espera fica numa thread parada (sem gastar CPU) que só existe enquanto a janela está
+/// aberta. O processo filho é nosso; nenhum outro processo é aberto.
+fn spawn_settings(hwnd: HWND) -> std::io::Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut child = std::process::Command::new(exe).arg("--configuracoes").spawn()?;
+    unsafe {
+        // Quem clicou no ícone pode trazer janelas para a frente; passa isso para a janela nova.
+        let _ = AllowSetForegroundWindow(child.id());
+    }
+    let hwnd = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        unsafe {
+            let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_SETTINGS_CLOSED, WPARAM(0), LPARAM(0));
+        }
+    });
+    Ok(())
+}
+
 /// PID do processo dono da janela em foco (0 se não houver). Não abre o processo.
 fn foreground_pid() -> u32 {
     let mut pid = 0;
@@ -468,6 +548,7 @@ fn show_menu(hwnd: HWND) {
             status: match app.hotkey {
                 HotkeyState::Registered => format!("Atalho: {label}"),
                 HotkeyState::Paused => format!("Atalho: {label} (pausado)"),
+                HotkeyState::Suspended => format!("Atalho: {label} (suspenso: configurações abertas)"),
                 HotkeyState::Taken => format!("Atalho: {label} (em uso por outro programa)"),
                 HotkeyState::Failed => format!("Atalho: {label} (não registrado)"),
             },
@@ -494,15 +575,17 @@ fn show_menu(hwnd: HWND) {
             add(menu, MF_GRAYED, 0, &plain(&format!("Erro no config.toml: {short}")));
         }
         separator(menu);
+        add(menu, MENU_ITEM_FLAGS(0), CMD_SETTINGS, "&Configurações…");
+        let _ = SetMenuDefaultItem(menu, CMD_SETTINGS as u32, 0);
+        separator(menu);
         add(menu, checked(info.mode == Mode::Focus), CMD_MODE_FOCUS, "Modo: app em &foco");
         add(menu, checked(info.mode == Mode::List), CMD_MODE_LIST, &format!("Modo: &lista de jogos ({})", info.games));
         separator(menu);
         add(menu, checked(info.paused), CMD_PAUSE, "&Pausar atalho");
         add(menu, checked(info.autostart), CMD_AUTOSTART, "&Iniciar com o Windows");
         separator(menu);
-        add(menu, MENU_ITEM_FLAGS(0), CMD_EDIT_CONFIG, "&Editar configurações…");
-        add(menu, MENU_ITEM_FLAGS(0), CMD_RELOAD, "&Recarregar configurações");
-        add(menu, MENU_ITEM_FLAGS(0), CMD_OPEN_LOGS, "Abrir pasta de lo&gs");
+        add(menu, MENU_ITEM_FLAGS(0), CMD_RELOAD, "&Recarregar o config.toml");
+        add(menu, MENU_ITEM_FLAGS(0), CMD_OPEN_FOLDER, "&Abrir pasta do vholumin (config e log)");
         separator(menu);
         add(menu, MENU_ITEM_FLAGS(0), CMD_EXIT, "&Sair");
 
@@ -518,8 +601,8 @@ fn show_menu(hwnd: HWND) {
 
     match command {
         0 => {}
-        CMD_EDIT_CONFIG => open_config_file(),
-        CMD_OPEN_LOGS => open_logs_folder(),
+        CMD_SETTINGS => open_settings(),
+        CMD_OPEN_FOLDER => open_data_folder(),
         CMD_EXIT => unsafe {
             let _ = DestroyWindow(hwnd);
         },
@@ -539,22 +622,8 @@ unsafe fn separator(menu: HMENU) {
     }
 }
 
-/// Abre o config.toml no Bloco de Notas (criando com os padrões, se não existir).
-fn open_config_file() {
-    let Some(path) = Config::path() else { return };
-    if !path.exists()
-        && let Err(e) = Config::default().save()
-    {
-        logf!("não foi possível criar o config.toml: {e}");
-        return;
-    }
-    let args = HSTRING::from(format!("\"{}\"", path.display()));
-    unsafe {
-        ShellExecuteW(None, w!("open"), w!("notepad.exe"), &args, PCWSTR::null(), SW_SHOWNORMAL);
-    }
-}
-
-fn open_logs_folder() {
+/// Abre a pasta com o config.toml e o log.txt no Explorer.
+fn open_data_folder() {
     let Some(dir) = crate::log::data_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
     unsafe {

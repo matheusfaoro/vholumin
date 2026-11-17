@@ -1,7 +1,9 @@
 //! Ícones da bandeja, desenhados por código (nítidos em qualquer escala de tela).
 //!
-//! Cada estado é um quadrado arredondado colorido com um alto-falante branco/escuro.
-//! As cores bem diferentes evitam confusão com o ícone de volume do próprio Windows.
+//! Cada estado é um quadrado arredondado colorido com um alto-falante branco: azul com duas
+//! ondas (volume alto), cinza com uma onda (volume baixo), cinza riscado (atalho fora do ar)
+//! e vermelho com X (nada encontrado). O fundo colorido evita confusão com o ícone de volume
+//! do próprio Windows.
 
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS, DeleteObject,
@@ -17,7 +19,7 @@ pub enum IconState {
     Lowered,
     /// A bind não achou áudio do alvo (piscada curta).
     NotFound,
-    /// Bind em uso por outro programa.
+    /// Atalho fora do ar: pausado, configurações abertas ou em uso por outro programa.
     Unavailable,
 }
 
@@ -26,14 +28,17 @@ pub const ALL: [IconState; 4] = [IconState::Normal, IconState::Lowered, IconStat
 type Rgb = (u8, u8, u8);
 
 const WHITE: Rgb = (255, 255, 255);
+const BLUE: Rgb = (37, 99, 235);
+const GRAY: Rgb = (107, 114, 128);
+const RED: Rgb = (220, 38, 38);
 
-/// (fundo, desenho)
+/// (fundo, desenho). Abaixado e fora do ar usam o mesmo cinza; o que muda é o desenho
+/// (uma onda só × alto-falante riscado).
 fn colors(state: IconState) -> (Rgb, Rgb) {
     match state {
-        IconState::Normal => ((37, 99, 235), WHITE),
-        IconState::Lowered => ((245, 158, 11), (17, 24, 39)),
-        IconState::NotFound => ((220, 38, 38), WHITE),
-        IconState::Unavailable => ((107, 114, 128), WHITE),
+        IconState::Normal => (BLUE, WHITE),
+        IconState::Lowered | IconState::Unavailable => (GRAY, WHITE),
+        IconState::NotFound => (RED, WHITE),
     }
 }
 

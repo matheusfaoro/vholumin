@@ -225,16 +225,20 @@ impl Default for Raw {
     }
 }
 
-/// Aceita "cs2", "cs2.exe" ou o caminho completo; guarda só "cs2.exe", sem repetição.
+/// Aceita "cs2", "cs2.exe" ou o caminho completo; devolve só "cs2.exe".
+pub fn normalize_game(entry: &str) -> Option<String> {
+    let entry = entry.trim();
+    let file = entry.rsplit(['\\', '/']).next().unwrap_or(entry).trim();
+    if file.is_empty() {
+        return None;
+    }
+    Some(if file.to_lowercase().ends_with(".exe") { file.to_string() } else { format!("{file}.exe") })
+}
+
+/// Normaliza a lista inteira, sem repetição.
 fn normalize_games(raw: &[String]) -> Vec<String> {
     let mut games: Vec<String> = Vec::new();
-    for entry in raw {
-        let entry = entry.trim();
-        let file = entry.rsplit(['\\', '/']).next().unwrap_or(entry).trim();
-        if file.is_empty() {
-            continue;
-        }
-        let file = if file.to_lowercase().ends_with(".exe") { file.to_string() } else { format!("{file}.exe") };
+    for file in raw.iter().filter_map(|entry| normalize_game(entry)) {
         if !games.iter().any(|g| same_exe(g, &file)) {
             games.push(file);
         }

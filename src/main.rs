@@ -17,8 +17,11 @@ mod diag;
 mod events;
 mod hotkey;
 mod icons;
+mod paint;
 mod processes;
+mod settings;
 mod target;
+mod theme;
 mod toggle;
 mod tray;
 
@@ -28,6 +31,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         None => app::run(),
+        // Processo da janela de configurações, aberto pela cópia da bandeja.
+        Some("--configuracoes") => settings::run(),
         Some("--listar") => diag::list(),
         Some("--alternar") => diag::toggle(args.get(1).map(String::as_str)),
         Some(other) => diag::usage_error(&format!("opção desconhecida: {other}")),
