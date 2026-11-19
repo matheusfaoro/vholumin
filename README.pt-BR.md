@@ -49,7 +49,8 @@ vermelho.
 
 Requer **Windows 10 ou 11, 64 bits**.
 
-1. Rode o instalador `vholumin-setup-<versão>.exe`.
+1. Baixe o `vholumin-setup-<versão>.exe` na
+   [versão mais recente](https://github.com/matheusfaoro/vholumin/releases/latest) e execute.
 2. Ele instala só para o seu usuário, **sem pedir administrador**, em
    `%LOCALAPPDATA%\Programs\vholumin`, com atalho no Menu Iniciar.
 3. Deixe marcada a opção **"Iniciar o vholumin junto com o Windows"** se quiser que ele
