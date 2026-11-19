@@ -1,2 +1,21 @@
+# Tudo que o build gera: o .exe (cargo) e o instalador (Inno Setup sai em target\instalador).
 /target
+
+# Documento interno de planejamento: fica só no PC, não vai para o GitHub.
+/PLANO.md
+
+# Logs.
 *.log
+
+# Cópias do config.toml e do log.txt trazidas da pasta do app (%APPDATA%\vholumin) para análise.
+/config.toml
+/log.txt
+
+# Configurações locais de editores e do Claude Code.
+/.vscode/
+/.idea/
+/.claude/
+
+# Arquivos que o Windows cria sozinho nas pastas.
+Thumbs.db
+desktop.ini

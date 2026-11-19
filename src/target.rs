@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn area_de_trabalho_em_foco_nao_mexe_nos_programas_abertos() {
-        // Bug real da Fase 1: com o Explorer em foco, Steam e navegador foram abaixados.
+        // Bug real encontrado nos testes: com o Explorer em foco, Steam e navegador foram abaixados.
         assert_eq!(select_for_focus(1, &[100, 200, 400, 510], &procs()), None);
     }
 

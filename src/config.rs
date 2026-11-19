@@ -54,7 +54,7 @@ impl Default for Config {
             max_pct: DEFAULT_MAX,
             mode: Mode::Focus,
             games: Vec::new(),
-            // O instalador (Fase 4) liga isso. Ligar por padrão faria a versão de
+            // O instalador liga isso. Ligar por padrão faria a versão de
             // desenvolvimento abrir sozinha com o Windows.
             start_with_windows: false,
         }

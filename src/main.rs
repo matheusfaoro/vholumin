@@ -1,6 +1,6 @@
 //! vholumin — alterna o volume do jogo no Mixer do Windows com uma tecla de atalho.
 //!
-//! Regras anti-cheat (PLANO.md, seção 3): nunca abrir outro processo, nunca ler ou escrever
+//! Regras anti-cheat (README, seção "Anti-cheat"): nunca abrir outro processo, nunca ler ou escrever
 //! memória alheia, nunca instalar hook nem simular teclas. Só `RegisterHotKey`, a janela em
 //! foco, o retrato da lista de processos e a Core Audio (a mesma API do Mixer do Windows).
 
