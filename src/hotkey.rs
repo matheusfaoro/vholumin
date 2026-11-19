@@ -21,6 +21,9 @@ const NAMED_KEYS: &[(&str, u32)] = &[
     ("Down", 0x28),
     ("Insert", 0x2D),
     ("Delete", 0x2E),
+    // Tecla de menu de contexto (≣). Sozinha como bind, deixa de abrir o menu de contexto nos
+    // outros programas enquanto o vholumin estiver aberto (Shift+F10 continua fazendo isso).
+    ("Menu", 0x5D),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +151,9 @@ mod tests {
 
     #[test]
     fn texto_volta_igual() {
-        for text in ["Ctrl+Alt+M", "Shift+F13", "F13", "Win+Num5", "Ctrl+Shift+PageDown", "Alt+0", "Ctrl+Space", "Pause"] {
+        for text in
+            ["Ctrl+Alt+M", "Shift+F13", "F13", "Win+Num5", "Ctrl+Shift+PageDown", "Alt+0", "Ctrl+Space", "Pause", "Menu"]
+        {
             assert_eq!(Hotkey::parse(text).unwrap().label(), text);
         }
     }
@@ -158,6 +163,14 @@ mod tests {
         assert_eq!(Hotkey::parse("F24").unwrap().vk, 0x87);
         assert_eq!(Hotkey::parse("Ctrl+Num0").unwrap().vk, 0x60);
         assert_eq!(Hotkey::parse("Alt+Down").unwrap().vk, 0x28);
+    }
+
+    #[test]
+    fn tecla_menu_sozinha_vale() {
+        assert_eq!(Hotkey::parse("menu").unwrap(), Hotkey { modifiers: 0, vk: 0x5D });
+        // Como chega da janela de configurações (captura da tecla ≣ sem modificadores).
+        assert_eq!(Hotkey::new(0, 0x5D).unwrap().label(), "Menu");
+        assert_eq!(Hotkey::new(MOD_SHIFT, 0x5D).unwrap().label(), "Shift+Menu");
     }
 
     #[test]
